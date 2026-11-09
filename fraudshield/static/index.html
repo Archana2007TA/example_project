@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FraudShield - Live Fraud Monitor</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0a1018;--panel:#111b2a;--line:#1f2e44;--text:#e6edf7;--mute:#8497b3;--ok:#3fc9b0;--warn:#f5b83d;--bad:#ff4d5e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "IBM Plex Sans",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--line)}
+h1{font-size:20px;margin:0;font-weight:600}
+h2{font-size:15px;margin:0 0 12px;font-weight:600}
+.controls{display:flex;flex-wrap:wrap;gap:8px}
+button{background:var(--panel);color:var(--text);border:1px solid var(--line);padding:7px 12px;border-radius:6px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--mute)} button:focus-visible{outline:2px solid var(--warn);outline-offset:2px}
+button.danger{border-color:var(--bad);color:var(--bad)}
+main{display:grid;gap:16px;padding:16px 24px;grid-template-columns:minmax(0,5fr) minmax(0,4fr)}
+@media(max-width:960px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}
+.kpis{grid-column:1/-1;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));background:none;border:0;padding:0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+.kpi b{display:block;font-size:26px;font-weight:600}.kpi span{color:var(--mute)}
+.gauge{display:flex;flex-direction:column;align-items:center}
+.gauge svg{width:100%;max-width:300px}
+#riskNum{font-size:34px;font-weight:600;margin-top:-34px}
+#alerts{display:flex;flex-direction:column;gap:8px;max-height:400px;overflow:auto}
+.alert{border:1px solid var(--bad);border-left-width:5px;border-radius:6px;padding:10px 12px;animation:flash 1.2s ease-out}
+@keyframes flash{0%{background:rgba(255,77,94,.45)}100%{background:transparent}}
+@media(prefers-reduced-motion:reduce){.alert{animation:none}}
+.alert.done{border-color:var(--line);opacity:.6}
+.alert .top{display:flex;justify-content:space-between;gap:8px;font-weight:500}
+.alert .why{color:var(--warn);margin:4px 0}
+.alert .meta{color:var(--mute);font-size:12px}
+.alert .acts{margin-top:8px;display:flex;gap:6px}
+.scroll{overflow:auto;max-height:400px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--mute);font-weight:400;padding:4px 8px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+td{padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+tr.bad td{color:var(--bad)}
+.empty{color:var(--mute)}
+#status{color:var(--mute)} #status.on{color:var(--ok)}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>FraudShield</h1><span id="status">Connecting...</span></div>
+  <div class="controls">
+    <button id="toggle">Pause stream</button>
+    <button data-attack="geo">Simulate impossible travel</button>
+    <button data-attack="amount">Simulate crypto spike</button>
+    <button data-attack="velocity">Simulate velocity burst</button>
+  </div>
+</header>
+<main>
+  <section class="kpis">
+    <div class="kpi"><b id="kTotal">0</b><span>Transactions scored</span></div>
+    <div class="kpi"><b id="kFlag" style="color:var(--bad)">0</b><span>Flagged as fraud</span></div>
+    <div class="kpi"><b id="kRate">0%</b><span>Flag rate</span></div>
+    <div class="kpi"><b id="kLat">-</b><span>Scored and broadcast (ms)</span></div>
+  </section>
+
+  <section>
+    <h2>Transactions vs. flagged fraud</h2>
+    <canvas id="chart" height="150"></canvas>
+  </section>
+  <section class="gauge">
+    <h2 style="align-self:flex-start">System risk index</h2>
+    <svg viewBox="0 0 200 110" role="img" aria-label="System risk gauge">
+      <path d="M10 100 A90 90 0 0 1 190 100" fill="none" stroke="#1f2e44" stroke-width="16" stroke-linecap="round"/>
+      <path id="arc" d="M10 100 A90 90 0 0 1 190 100" fill="none" stroke="#3fc9b0" stroke-width="16" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="283" style="transition:stroke-dashoffset .4s,stroke .4s"/>
+    </svg>
+    <div id="riskNum">0</div>
+    <span class="empty" id="riskLabel">Normal</span>
+  </section>
+
+  <section>
+    <h2>Live transactions</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Time</th><th>User</th><th>Category</th><th>Amount</th><th>Risk</th></tr></thead>
+      <tbody id="ticker"></tbody>
+    </table></div>
+  </section>
+  <section>
+    <h2>Fraud alerts</h2>
+    <div id="alerts"><p class="empty" id="noAlerts">No alerts yet. Use the simulate buttons to trigger one.</p></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let total = 0, flagged = 0, risk = 0;
+const labels = [], seriesTotal = [], seriesFlag = [];
+let winTotal = 0, winFlag = 0;
+
+const chart = new Chart($("chart"), {
+  type: "line",
+  data: { labels, datasets: [
+    { label: "Transactions", data: seriesTotal, borderColor: "#3fc9b0", tension: .3, pointRadius: 0 },
+    { label: "Flagged", data: seriesFlag, borderColor: "#ff4d5e", tension: .3, pointRadius: 0 }]},
+  options: { animation: false, scales: { x: { ticks: { color: "#8497b3", maxTicksLimit: 6 }, grid: { color: "#1f2e44" } },
+    y: { beginAtZero: true, ticks: { color: "#8497b3", precision: 0 }, grid: { color: "#1f2e44" } } },
+    plugins: { legend: { labels: { color: "#e6edf7" } } } }
+});
+// one chart point every 3 seconds
+setInterval(() => {
+  labels.push(new Date().toLocaleTimeString()); seriesTotal.push(winTotal); seriesFlag.push(winFlag);
+  winTotal = winFlag = 0;
+  if (labels.length > 30) { labels.shift(); seriesTotal.shift(); seriesFlag.shift(); }
+  chart.update();
+}, 3000);
+
+function setGauge(v) {
+  risk = risk * 0.8 + v * 0.2;               // smoothed so it moves, not jitters
+  const r = Math.round(risk);
+  $("arc").style.strokeDashoffset = 283 * (1 - r / 100);
+  $("arc").style.stroke = r > 60 ? "#ff4d5e" : r > 30 ? "#f5b83d" : "#3fc9b0";
+  $("riskNum").textContent = r;
+  $("riskLabel").textContent = r > 60 ? "Critical" : r > 30 ? "Elevated" : "Normal";
+}
+
+function addRow(t) {
+  const tr = document.createElement("tr");
+  if (t.flagged) tr.className = "bad";
+  const time = new Date(t.timestamp).toLocaleTimeString();
+  tr.innerHTML = `<td>${time}</td><td>${t.user_id}</td><td>${t.merchant_category}</td><td>$${t.amount.toLocaleString()}</td><td>${t.risk}</td>`;
+  $("ticker").prepend(tr);
+  while ($("ticker").children.length > 40) $("ticker").lastChild.remove();
+}
+
+function addAlert(t) {
+  $("noAlerts")?.remove();
+  const f = t.features, el = document.createElement("div");
+  el.className = "alert";
+  el.innerHTML = `<div class="top"><span>${t.user_id} - $${t.amount.toLocaleString()} at ${t.merchant_category}</span><span>Risk ${t.risk}</span></div>
+    <div class="why">${t.reasons.join(" + ")}</div>
+    <div class="meta">Anomaly score ${t.anomaly_score} | velocity ${f.velocity} | geo speed ${f.geo_speed.toLocaleString()} km/h | scored in ${t.latency_ms} ms</div>
+    <div class="acts"><button class="danger">Block card</button><button>Flag user</button><button>Mark safe</button></div>`;
+  el.querySelectorAll("button").forEach(b => b.onclick = () => {
+    el.className = "alert done";
+    el.querySelector(".acts").textContent = `${b.textContent} - recorded`;
+  });
+  $("alerts").prepend(el);
+  while ($("alerts").children.length > 25) $("alerts").lastChild.remove();
+}
+
+function onTx(t) {
+  total++; winTotal++;
+  if (t.flagged) { flagged++; winFlag++; addAlert(t); }
+  addRow(t); setGauge(t.risk);
+  $("kTotal").textContent = total.toLocaleString();
+  $("kFlag").textContent = flagged;
+  $("kRate").textContent = (flagged / total * 100).toFixed(1) + "%";
+  $("kLat").textContent = t.latency_ms;
+}
+
+function connect() {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live-feed`);
+  ws.onopen = () => { $("status").textContent = "Live"; $("status").className = "on"; ws.send("hi"); };
+  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.type === "tx") onTx(m.data); };
+  ws.onclose = () => { $("status").textContent = "Disconnected, retrying..."; $("status").className = ""; setTimeout(connect, 1500); };
+}
+connect();
+
+let running = true;
+$("toggle").onclick = async () => {
+  running = !running;
+  await fetch(`/api/v1/simulate/${running ? "start" : "stop"}`, { method: "POST" });
+  $("toggle").textContent = running ? "Pause stream" : "Resume stream";
+};
+document.querySelectorAll("[data-attack]").forEach(b =>
+  b.onclick = () => fetch(`/api/v1/simulate/attack/${b.dataset.attack}`, { method: "POST" }));
+</script>
+</body>
+</html>
